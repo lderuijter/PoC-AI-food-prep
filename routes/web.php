@@ -1,15 +1,10 @@
 <?php
 
-use App\Http\Controllers\TodoController;
+use App\Http\Controllers\IngredientController;
+use App\Http\Controllers\IngredientVoorkeurController;
 use Illuminate\Support\Facades\Route;
 
-Route::get('/', function () {
-    return view('welcome');
-});
+Route::get('/', [IngredientController::class, 'index'])->name('ingredienten.index');
 
-Route::get('/todos', [TodoController::class, 'index']);
-Route::post('/todos', [TodoController::class, 'store']);
-Route::put('/todos/{todo}', [TodoController::class, 'update']);
-Route::delete('/todos/{todo}', [TodoController::class, 'destroy']);
-
-Route::resource('todos', TodoController::class)->except(['show', 'create']);
+Route::post('/ingredienten/{ingredient}/voorkeur', [IngredientVoorkeurController::class, 'store'])
+    ->name('voorkeuren.store');

@@ -29,4 +29,11 @@ class User extends Authenticatable
             'password' => 'hashed',
         ];
     }
+
+    public function ingredientVoorkeuren()
+    {
+        return $this->belongsToMany(Ingredient::class, 'ingredient_voorkeuren')
+            ->withPivot('voorkeur')
+            ->withTimestamps();
+    }
 }
