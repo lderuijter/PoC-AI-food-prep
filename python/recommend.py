@@ -5,22 +5,30 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
 
-# Pad naar de sqlite-database van de Laravel-app (twee mappen omhoog vanaf dit script)
 BASE_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = BASE_DIR / "database" / "database.sqlite"
 
 
-def laad_ingredienten() -> pd.DataFrame:
-    """Haalt alle rijen uit de ingredienten-tabel op als DataFrame."""
+def laad_recepten() -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
-        return pd.read_sql("SELECT * FROM ingredienten", conn)
+        return pd.read_sql("SELECT id, naam FROM recepten", conn)
+
+
+def laad_recept_ingredienten() -> pd.DataFrame:
+    with sqlite3.connect(DB_PATH) as conn:
+        return pd.read_sql(
+            """
+            SELECT ri.recept_id, ri.ingredient_id, i.nova_groep
+            FROM recept_ingredienten ri
+            JOIN ingredienten i ON i.id = ri.ingredient_id
+            """,
+            conn,
+        )
 
 
 def laad_voorkeuren(user_id: int) -> pd.DataFrame:
-    """Haalt de opgeslagen voorkeuren (1-5) van één gebruiker op."""
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql(
             "SELECT ingredient_id, voorkeur FROM ingredient_voorkeuren WHERE user_id = ?",
@@ -28,89 +36,79 @@ def laad_voorkeuren(user_id: int) -> pd.DataFrame:
             params=(user_id,),
         )
 
+def bepaal_match_kleur(match_percentage: int) -> str:
+    """Zet het matchpercentage om naar een kleurcode voor de UI."""
+    if match_percentage >= 80:
+        return "groen"
+    if match_percentage >= 60:
+        return "geel"
+    if match_percentage >= 40:
+        return "oranje"
+    return "rood"
 
-def bouw_features(df: pd.DataFrame) -> np.ndarray:
-    """
-    Zet de ruwe ingredient-data om in een numerieke featurematrix:
-    - macro's/calorieën/NOVA worden geschaald (StandardScaler) zodat grote getallen
-      (bv. calorieën) niet zwaarder wegen dan kleine (bv. NOVA-groep 1-4)
-    - categorie + smaakprofiel worden one-hot encoded (elke waarde wordt een eigen 0/1-kolom)
-    """
-    numeriek = df[[
-        "calorieen_per_100g",
-        "eiwitten_per_100g",
-        "koolhydraten_per_100g",
-        "vetten_per_100g",
-        "nova_groep",
-    ]].fillna(0)
-
-    categorisch = pd.get_dummies(df[["categorie", "smaakprofiel"]].fillna("onbekend"))
-
-    matrix = pd.concat(
-        [pd.DataFrame(StandardScaler().fit_transform(numeriek), columns=numeriek.columns), categorisch],
-        axis=1,
-    )
-    return matrix.to_numpy()
+def bepaal_kleur(gemiddelde_nova: float) -> str:
+    """Zet de gemiddelde NOVA-groep van een recept om naar een kleurcode voor de UI."""
+    if gemiddelde_nova < 1.5:
+        return "groen"
+    if gemiddelde_nova < 2.5:
+        return "geel"
+    if gemiddelde_nova < 3.5:
+        return "oranje"
+    return "rood"
 
 
 def aanbevelingen(user_id: int, top_n: int = 10) -> pd.DataFrame:
-    """
-    Kernlogica:
-    1. Pak alle ingrediënten die de gebruiker goed vindt (voorkeur >= 4).
-    2. Zoek voor elk daarvan de dichtstbijzijnde buren (cosine similarity op de features).
-    3. Tel de "dichtbij-scores" op per kandidaat-ingrediënt (zo kan iets met meerdere
-       favoriete buren hoger scoren).
-    4. Filter alles wat de gebruiker al beoordeeld heeft eruit — dit zijn juist de
-       nieuwe/nog-niet-geziene suggesties.
-    5. Sorteer op score, met eiwitten/NOVA als tiebreaker (sporters-prioriteit).
-    """
-    ingredienten = laad_ingredienten()
+    recepten = laad_recepten()
+    recept_ingredienten = laad_recept_ingredienten()
     voorkeuren = laad_voorkeuren(user_id)
 
     if voorkeuren.empty:
         raise ValueError("Deze gebruiker heeft nog geen voorkeuren.")
 
-    features = bouw_features(ingredienten)
+    alle_ingredient_ids = sorted(recept_ingredienten["ingredient_id"].unique())
+    index = {ingredient_id: i for i, ingredient_id in enumerate(alle_ingredient_ids)}
 
-    # NearestNeighbors: onbegeleid (unsupervised) model, geen labels nodig,
-    # zoekt puur op gelijkenis tussen featurevectoren.
-    model = NearestNeighbors(n_neighbors=min(top_n + 1, len(ingredienten)), metric="cosine")
-    model.fit(features)
+    gebruiker_vector = np.zeros(len(alle_ingredient_ids))
+    for _, rij in voorkeuren.iterrows():
+        if rij["ingredient_id"] in index:
+            gebruiker_vector[index[rij["ingredient_id"]]] = rij["voorkeur"]
 
-    geliefd = voorkeuren[voorkeuren["voorkeur"] >= 4]["ingredient_id"].tolist()
-    beoordeeld = set(voorkeuren["ingredient_id"])
+    recept_vectoren = np.zeros((len(recepten), len(alle_ingredient_ids)))
+    gemiddelde_nova_per_recept = {}
 
-    scores: dict[int, float] = {}
-    for ingredient_id in geliefd:
-        idx = ingredienten.index[ingredienten["id"] == ingredient_id]
-        if idx.empty:
-            continue
-        afstanden, buren = model.kneighbors(features[idx[0]].reshape(1, -1))
-        for afstand, buur_idx in zip(afstanden[0], buren[0]):
-            buur_id = ingredienten.iloc[buur_idx]["id"]
-            if buur_id in beoordeeld:
-                continue  # al beoordeeld, dus geen "nieuwe" suggestie
-            # cosine-afstand -> gelijkenis (1 - afstand), opgeteld bij bestaande score
-            scores[buur_id] = scores.get(buur_id, 0) + (1 - afstand)
+    for i, recept_id in enumerate(recepten["id"]):
+        rijen = recept_ingredienten[recept_ingredienten["recept_id"] == recept_id]
+        for ingredient_id in rijen["ingredient_id"]:
+            if ingredient_id in index:
+                recept_vectoren[i, index[ingredient_id]] = 1
+        gemiddelde_nova_per_recept[recept_id] = rijen["nova_groep"].mean()
 
-    if not scores:
-        return pd.DataFrame()
+    scores = cosine_similarity(gebruiker_vector.reshape(1, -1), recept_vectoren)[0]
 
-    resultaat = ingredienten[ingredienten["id"].isin(scores.keys())].copy()
-    resultaat["score"] = resultaat["id"].map(scores)
+    resultaat = recepten.copy()
+    resultaat["score"] = scores
+    resultaat["gemiddelde_nova"] = resultaat["id"].map(gemiddelde_nova_per_recept)
+    resultaat["nova_kleur"] = resultaat["gemiddelde_nova"].apply(bepaal_kleur)
 
-    # Sporters-prioriteit als tiebreaker: bij gelijke score wint hoger eiwit / lagere NOVA-groep
-    resultaat = resultaat.sort_values(
-        by=["score", "eiwitten_per_100g", "nova_groep"],
-        ascending=[False, False, True],
-    )
+    # Cold start: recepten zonder enige overlap (score 0) niet tonen
+    resultaat = resultaat[resultaat["score"] > 0]
 
-    return resultaat.head(top_n)[["naam", "categorie", "eiwitten_per_100g", "nova_groep", "score"]]
+    if resultaat.empty:
+        return resultaat
+
+    # Percentage relatief aan de beste match in dit resultaat
+    resultaat["match_percentage"] = (
+        resultaat["score"] / resultaat["score"].max() * 100
+    ).round().astype(int)
+
+    resultaat["match_kleur"] = resultaat["match_percentage"].apply(bepaal_match_kleur)
+
+    resultaat = resultaat.sort_values("score", ascending=False)
+
+    return resultaat.head(top_n)[["naam", "score", "match_percentage", "match_kleur", "gemiddelde_nova", "nova_kleur"]]
 
 
 if __name__ == "__main__":
-    # Wordt aangeroepen als: python3 recommend.py <user_id>
-    # Print JSON naar stdout, zodat Laravel (via Process::run) het kan decoden.
     user_id = int(sys.argv[1]) if len(sys.argv) > 1 else 1
     try:
         resultaat = aanbevelingen(user_id)

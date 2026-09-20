@@ -35,4 +35,11 @@ class Ingredient extends Model
             ->withPivot('voorkeur')
             ->withTimestamps();
     }
+
+    public function recepten()
+    {
+        return $this->belongsToMany(Recept::class, 'recept_ingredienten')
+            ->withPivot('hoeveelheid_gram')
+            ->withTimestamps();
+    }
 }
