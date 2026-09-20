@@ -8,6 +8,8 @@
 /.codex
 /.cursor/
 /.idea
+/python/.idea
+/python/.venv
 /.nova
 /.phpunit.cache
 /.vscode

@@ -13,7 +13,7 @@ class IngredientVoorkeurController extends Controller
             'voorkeur' => 'required|integer|between:1,5',
         ]);
 
-        $userId = 1; // vaste test-user zolang er geen login is
+        $userId = 1; // vaste gebruiker zonder login
 
         $ingredient->gebruikers()->syncWithoutDetaching([
             $userId => ['voorkeur' => $validated['voorkeur']],
