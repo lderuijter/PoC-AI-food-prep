@@ -2,6 +2,17 @@
     <a href="{{ route('ingredienten.index') }}" class="inline-block text-gray-400 hover:text-gray-200 text-sm mb-6">←
         Terug</a>
 
+    <h1 class="text-2xl font-semibold text-gray-100 mb-4">Jouw voorkeuren</h1>
+    <div class="flex flex-wrap gap-2 mb-8">
+        @forelse ($voorkeuren as $voorkeur)
+            <span class="text-xs px-2 py-1 rounded border bg-gray-800 text-gray-300 border-gray-600">
+            {{ $voorkeur['naam'] }} ({{ $voorkeur['voorkeur'] }}/5)
+        </span>
+        @empty
+            <p class="text-gray-500 text-sm">Nog geen voorkeuren opgegeven.</p>
+        @endforelse
+    </div>
+
     <h1 class="text-2xl font-semibold text-gray-100 mb-6">Aanbevolen recepten</h1>
 
     @if ($foutmelding)

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Ingredient;
 use Illuminate\Support\Facades\Process;
 
 class RecommendationController extends Controller
@@ -29,6 +30,16 @@ class RecommendationController extends Controller
     {
         $userId = 1; // vaste test-user zolang er geen login is
 
+        $voorkeuren = Ingredient::whereHas('gebruikers', fn ($q) => $q->where('user_id', $userId))
+            ->with(['gebruikers' => fn ($q) => $q->where('user_id', $userId)])
+            ->get()
+            ->map(fn ($ingredient) => [
+                'naam' => $ingredient->naam,
+                'voorkeur' => $ingredient->gebruikers->first()->pivot->voorkeur,
+            ])
+            ->sortByDesc('voorkeur')
+            ->values();
+
         $result = Process::run(['python3', base_path('python/recommend.py'), $userId]);
 
         if ($result->failed()) {
@@ -40,6 +51,7 @@ class RecommendationController extends Controller
         if (isset($ruweData['error'])) {
             return view('aanbevelingen.index', [
                 'aanbevelingen' => collect(),
+                'voorkeuren' => $voorkeuren,
                 'foutmelding' => $ruweData['error'],
             ]);
         }
@@ -50,6 +62,6 @@ class RecommendationController extends Controller
             return $item;
         });
 
-        return view('aanbevelingen.index', ['aanbevelingen' => $aanbevelingen, 'foutmelding' => null]);
+        return view('aanbevelingen.index', ['aanbevelingen' => $aanbevelingen, 'voorkeuren' => $voorkeuren, 'foutmelding' => null]);
     }
 }
