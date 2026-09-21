@@ -1,4 +1,4 @@
-# AI Food Prep – Aanbevelingssysteem
+# AI Food Prep: Aanbevelingssysteem
 
 Voor dit project heb ik een eenvoudig machine-learning aanbevelingssysteem gemaakt dat recepten aanbeveelt op basis van de voorkeuren van een gebruiker.
 
