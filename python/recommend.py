@@ -83,13 +83,13 @@ def aanbevelingen(user_id: int, top_n: int = 10) -> pd.DataFrame:
     index = {ingredient_id: i for i, ingredient_id in enumerate(alle_ingredient_ids)}
 
     # Maak de vector van de gebruiker.
-    # Een hogere voorkeur krijgt een zwaardere waarde door het kwadrateren.
-    # Hierdoor heeft een 5/5 veel meer invloed dan bijvoorbeeld een 2/5.
+    # De voorkeur wordt omgezet naar een waarde tussen 0 en 1.
+    # Een hogere beoordeling krijgt daardoor een hogere waarde.
     gebruiker_vector = np.zeros(len(alle_ingredient_ids))
     for _, rij in voorkeuren.iterrows():
         if rij["ingredient_id"] in index:
             voorkeur = rij["voorkeur"]
-            gebruiker_vector[index[rij["ingredient_id"]]] = (voorkeur / 5) ** 2
+            gebruiker_vector[index[rij["ingredient_id"]]] = voorkeur / 5
 
     # Maak voor ieder recept een vector.
     # 1 betekent dat het ingrediënt in het recept zit, 0 dat dit niet zo is.
@@ -107,15 +107,34 @@ def aanbevelingen(user_id: int, top_n: int = 10) -> pd.DataFrame:
         gemiddelde_nova_per_recept[recept_id] = rijen["nova_groep"].mean()
 
     # Gebruik alleen ingrediënten waarvoor de gebruiker een positieve beoordeling heeft.
-    # Onbekende ingrediënten worden daardoor niet meegenomen in de vergelijking.
+    # Ingrediënten zonder positieve beoordeling worden daardoor niet meegenomen in de vergelijking.
     beoordeelde_ingredienten = gebruiker_vector > 0
 
-    # Bereken met scikit-learn hoe sterk de gebruiker en ieder recept overeenkomen.
-    # Hoe dichter de vectoren bij elkaar passen, hoe hoger de similarity-score.
-    scores = cosine_similarity(
+    # Bereken met scikit-learn hoe sterk de ingrediënten van de recepten
+    # overeenkomen met de voorkeuren van de gebruiker.
+    cosine_scores = cosine_similarity(
         gebruiker_vector[beoordeelde_ingredienten].reshape(1, -1),
         recept_vectoren[:, beoordeelde_ingredienten],
     )[0]
+
+    # Bereken per recept het gemiddelde van de voorkeuren voor de ingrediënten
+    # die de gebruiker heeft beoordeeld en die in het recept voorkomen.
+    voorkeur_scores = []
+
+    for recept_vector in recept_vectoren:
+        recept_ingredienten = recept_vector[beoordeelde_ingredienten] > 0
+        beoordelingen = gebruiker_vector[beoordeelde_ingredienten][recept_ingredienten]
+
+        if len(beoordelingen) == 0:
+            voorkeur_scores.append(0)
+        else:
+            voorkeur_scores.append(beoordelingen.mean())
+
+    voorkeur_scores = np.array(voorkeur_scores)
+
+    # Combineer de cosine similarity met de directe voorkeursscore.
+    # De cosine similarity telt voor 40% mee en de directe voorkeuren voor 60%.
+    scores = (cosine_scores * 0.4) + (voorkeur_scores * 0.6)
 
     # Maak een nieuw DataFrame met de recepten en hun berekende scores.
     resultaat = recepten.copy()
@@ -133,7 +152,7 @@ def aanbevelingen(user_id: int, top_n: int = 10) -> pd.DataFrame:
     if resultaat.empty:
         return resultaat
 
-    # Zet de similarity-score om naar een percentage.
+    # Zet de score om naar een percentage.
     # Het best scorende recept krijgt hierbij 100%.
     resultaat["match_percentage"] = (
         resultaat["score"] / resultaat["score"].max() * 100
