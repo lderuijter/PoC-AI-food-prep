@@ -40,7 +40,11 @@ class RecommendationController extends Controller
             ->sortByDesc('voorkeur')
             ->values();
 
-        $result = Process::run(['python3', base_path('python/recommend.py'), $userId]);
+        $pythonPath = base_path('python/.venv/Scripts/python.exe');
+        $scriptPath = base_path('python/recommend.py');
+
+        $result = Process::env(getenv())
+            ->run([$pythonPath, $scriptPath, $userId]);
 
         if ($result->failed()) {
             return back()->withErrors(['recommend' => $result->errorOutput()]);
